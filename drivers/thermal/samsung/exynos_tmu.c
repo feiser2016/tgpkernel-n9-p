@@ -643,7 +643,7 @@ static int exynos_get_temp(void *p, int *temp)
 	unsigned int i;
 #endif
 
-	if (!data || !data->tmu_read)
+	if (!data || !data->tmu_read || !data->enabled)
 		return -EINVAL;
 
 	mutex_lock(&data->lock);

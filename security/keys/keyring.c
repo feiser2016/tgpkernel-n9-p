@@ -452,34 +452,33 @@ static long keyring_read(const struct key *keyring,
 			 char __user *buffer, size_t buflen)
 {
 	struct keyring_read_iterator_context ctx;
-	unsigned long nr_keys;
-	int ret;
+	long ret;
 
 	kenter("{%d},,%zu", key_serial(keyring), buflen);
 
 	if (buflen & (sizeof(key_serial_t) - 1))
 		return -EINVAL;
 
-	nr_keys = keyring->keys.nr_leaves_on_tree;
-	if (nr_keys == 0)
-		return 0;
-
-	/* Calculate how much data we could return */
-	if (!buffer || !buflen)
-		return nr_keys * sizeof(key_serial_t);
-
-	/* Copy the IDs of the subscribed keys into the buffer */
-	ctx.buffer = (key_serial_t __user *)buffer;
-	ctx.buflen = buflen;
-	ctx.count = 0;
-	ret = assoc_array_iterate(&keyring->keys, keyring_read_iterator, &ctx);
-	if (ret < 0) {
-		kleave(" = %d [iterate]", ret);
-		return ret;
+	/* Copy as many key IDs as fit into the buffer */
+	if (buffer && buflen) {
+		ctx.buffer = (key_serial_t __user *)buffer;
+		ctx.buflen = buflen;
+		ctx.count = 0;
+		ret = assoc_array_iterate(&keyring->keys,
+					  keyring_read_iterator, &ctx);
+		if (ret < 0) {
+			kleave(" = %ld [iterate]", ret);
+			return ret;
+		}
 	}
 
-	kleave(" = %zu [ok]", ctx.count);
-	return ctx.count;
+	/* Return the size of the buffer needed */
+	ret = keyring->keys.nr_leaves_on_tree * sizeof(key_serial_t);
+	if (ret <= buflen)
+		kleave("= %ld [ok]", ret);
+	else
+		kleave("= %ld [buffer too small]", ret);
+	return ret;
 }
 
 /*
@@ -652,9 +651,6 @@ static bool search_nested_keyrings(struct key *keyring,
 #define STATE_CHECKS (KEYRING_SEARCH_NO_STATE_CHECK | KEYRING_SEARCH_DO_STATE_CHECK)
 	BUG_ON((ctx->flags & STATE_CHECKS) == 0 ||
 	       (ctx->flags & STATE_CHECKS) == STATE_CHECKS);
-
-	if (ctx->index_key.description)
-		ctx->index_key.desc_len = strlen(ctx->index_key.description);
 
 	/* Check to see if this top-level keyring is what we are looking for
 	 * and whether it is valid or not.
@@ -913,6 +909,7 @@ key_ref_t keyring_search(key_ref_t keyring,
 	struct keyring_search_context ctx = {
 		.index_key.type		= type,
 		.index_key.description	= description,
+		.index_key.desc_len	= strlen(description),
 		.cred			= current_cred(),
 		.match_data.cmp		= key_default_cmp,
 		.match_data.raw_data	= description,

@@ -499,9 +499,6 @@ int fscrypt_initialize(void)
 {
 	int i, res = -ENOMEM;
 
-	if (fscrypt_bounce_page_pool)
-		return 0;
-
 	mutex_lock(&fscrypt_init_mutex);
 	if (fscrypt_bounce_page_pool)
 		goto already_initialized;
@@ -535,10 +532,17 @@ EXPORT_SYMBOL(fscrypt_initialize);
  */
 static int __init fscrypt_init(void)
 {
-	int res = -ENOMEM;
-
+	/*
+	 * Use an unbound workqueue to allow bios to be decrypted in parallel
+	 * even when they happen to complete on the same CPU.  This sacrifices
+	 * locality, but it's worthwhile since decryption is CPU-intensive.
+	 *
+	 * Also use a high-priority workqueue to prioritize decryption work,
+	 * which blocks reads from completing, over regular application tasks.
+	 */
 	fscrypt_read_workqueue = alloc_workqueue("fscrypt_read_queue",
-							WQ_HIGHPRI, 0);
+						 WQ_UNBOUND | WQ_HIGHPRI,
+						 num_online_cpus());
 	if (!fscrypt_read_workqueue)
 		goto fail;
 
@@ -550,20 +554,14 @@ static int __init fscrypt_init(void)
 	if (!fscrypt_info_cachep)
 		goto fail_free_ctx;
 
-	res = fscrypt_sec_crypto_init();
-	if (res)
-		goto fail_free_info;
-
 	return 0;
 
-fail_free_info:
-	kmem_cache_destroy(fscrypt_info_cachep);
 fail_free_ctx:
 	kmem_cache_destroy(fscrypt_ctx_cachep);
 fail_free_queue:
 	destroy_workqueue(fscrypt_read_workqueue);
 fail:
-	return res;
+	return -ENOMEM;
 }
 module_init(fscrypt_init)
 
